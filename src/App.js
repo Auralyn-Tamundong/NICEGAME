@@ -7,9 +7,9 @@ function buildRoundRobin(players, mode, minGames = 8) {
   let matchId = Date.now();
 
   const gameCount = {};
-  const partnerCount = {};   // partnerCount[a][b] = times paired together
-  const opponentCount = {};  // opponentCount[a][b] = times faced each other
-  const lastMatchIndex = {}; // last results[] index the player appeared in
+  const partnerCount = {};  
+  const opponentCount = {};  
+  const lastMatchIndex = {}; 
 
   players.forEach(p => {
     gameCount[p] = 0;
@@ -20,9 +20,6 @@ function buildRoundRobin(players, mode, minGames = 8) {
 
   const getPartner = (a, b) => (partnerCount[a][b] || 0);
   const getOpponent = (a, b) => (opponentCount[a][b] || 0);
-
-  // How many matches of rest a player needs before playing again.
-  // restRequired = 1 means they must sit out at least 1 match between games.
   const restRequired = 1;
   const hasRested = (p, currentIdx) => (currentIdx - lastMatchIndex[p]) > restRequired;
 
@@ -61,8 +58,6 @@ function buildRoundRobin(players, mode, minGames = 8) {
     iter++;
     const currentIdx = results.length;
 
-    // Prefer rested players, but fall back to all players sorted by games played
-    // if not enough rested players are available.
     let pool = players.filter(p => hasRested(p, currentIdx));
 
     if (mode === "doubles") {
@@ -75,12 +70,9 @@ function buildRoundRobin(players, mode, minGames = 8) {
         });
       }
 
-      // Score every possible 4-player group + team split.
-      // Lower score = better (fewer repeats, more games needed).
       let best = null;
       let bestScore = Infinity;
 
-      // Only scan top candidates to avoid O(n^4) on large rosters
       const candidates = pool.slice(0, Math.min(pool.length, 12));
 
       for (let i = 0; i < candidates.length; i++) {
@@ -89,7 +81,6 @@ function buildRoundRobin(players, mode, minGames = 8) {
             for (let l = k + 1; l < candidates.length; l++) {
               const four = [candidates[i], candidates[j], candidates[k], candidates[l]];
 
-              // All 3 possible ways to split 4 players into 2 teams of 2
               const splits = [
                 [[four[0], four[1]], [four[2], four[3]]],
                 [[four[0], four[2]], [four[1], four[3]]],
@@ -97,17 +88,14 @@ function buildRoundRobin(players, mode, minGames = 8) {
               ];
 
               for (const [t1, t2] of splits) {
-                // Penalty: repeat partners (heaviest weight)
                 const partnerPenalty =
                   getPartner(t1[0], t1[1]) * 20 +
                   getPartner(t2[0], t2[1]) * 20;
 
-                // Penalty: repeat opponents
                 const opponentPenalty =
                   (getOpponent(t1[0], t2[0]) + getOpponent(t1[0], t2[1]) +
                    getOpponent(t1[1], t2[0]) + getOpponent(t1[1], t2[1])) * 8;
 
-                // Bonus: prioritise players who need more games & have rested longer
                 const needBonus = four.reduce((s, p) => s + (minGames - gameCount[p]), 0) * 3;
                 const restBonus = four.reduce((s, p) => s + (currentIdx - lastMatchIndex[p]), 0);
 
@@ -126,13 +114,11 @@ function buildRoundRobin(players, mode, minGames = 8) {
       if (best) {
         addMatch(best.t1, best.t2);
       } else {
-        // Hard fallback: just take the 4 players with the fewest games
         const sorted = [...players].sort((a, b) => gameCount[a] - gameCount[b]);
         addMatch([sorted[0], sorted[1]], [sorted[2], sorted[3]]);
       }
 
     } else {
-      // Singles
       if (pool.length < 2) {
         pool = [...players].sort((a, b) => gameCount[a] - gameCount[b]);
       }
@@ -275,7 +261,6 @@ export default function App() {
     const freshStats = {};
     players.forEach((p) => { freshStats[p] = { wins: 0, losses: 0, games: 0, lastResult: null }; });
 
-    // ── Set all state first, THEN switch tab so React batches correctly ──
     setMatches(ms);
     setStats(freshStats);
     setCourts([null, null, null, null]);
@@ -284,7 +269,6 @@ export default function App() {
     recordedIds.current = new Set();
     showToast(`${ms.length} matches generated 🏓`);
 
-    // Use setTimeout so the tab switch happens after the state batch commits
     setTimeout(() => setTab("matches"), 0);
   };
 
@@ -324,61 +308,58 @@ export default function App() {
     setCourtStartTimes((t) => { const n = [...t]; n[courtIdx] = null; return n; });
   };
 
-  const recordWinByPlayer = (matchId, clickedName) => {
-    if (recordedIds.current.has(matchId)) return;
-    recordedIds.current.add(matchId);
+const recordWinByPlayer = (matchId, clickedName) => {
+  if (recordedIds.current.has(matchId)) return;
+  
+  const m = matches.find((x) => x.id === matchId);
+  if (!m || m.done) return;
+  
+  recordedIds.current.add(matchId);
+  
+  const winTeam = m.t1.includes(clickedName) ? 1 : 2;
+  const winners = winTeam === 1 ? m.t1 : m.t2;
+  const losers  = winTeam === 1 ? m.t2 : m.t1;
+  const courtIdx = courts.findIndex((c) => c === matchId);
 
-    setMatches((prev) => {
-      const copy = prev.map((m) => ({ ...m }));
-      const m = copy.find((x) => x.id === matchId);
-      if (!m || m.done) return prev;
-      const winTeam = m.t1.includes(clickedName) ? 1 : 2;
-      m.done = true;
-      m.winner = winTeam;
-      const winners = winTeam === 1 ? m.t1 : m.t2;
-      const losers  = winTeam === 1 ? m.t2 : m.t1;
+  setMatches((prev) =>
+    prev.map((x) => x.id === matchId ? { ...x, done: true, winner: winTeam } : x)
+  );
 
-      setStats((s) => {
-        const ns = { ...s };
-        winners.forEach((name) => {
-          const st = { ...(ns[name] || { wins: 0, losses: 0, games: 0, lastResult: null }) };
-          st.wins++; st.games++; st.lastResult = "win"; ns[name] = st;
-        });
-        losers.forEach((name) => {
-          const st = { ...(ns[name] || { wins: 0, losses: 0, games: 0, lastResult: null }) };
-          st.losses++; st.games++; st.lastResult = "lose"; ns[name] = st;
-        });
-        return ns;
-      });
-
-      const courtIdx = courts.findIndex((c) => c === matchId);
-
-      setHistory((h) => {
-        if (h.some((x) => x.matchId === matchId)) return h;
-        return [{
-          matchId,
-          court: courtIdx + 1,
-          type: m.type, t1: m.t1, t2: m.t2,
-          winners, losers,
-          time: new Date().toLocaleTimeString()
-        }, ...h];
-      });
-
-      setCourts((c) => {
-        const n = [...c];
-        const ci = n.indexOf(matchId);
-        if (ci !== -1) {
-          n[ci] = null;
-          setCourtStartTimes((t) => { const nt = [...t]; nt[ci] = null; return nt; });
-        }
-        return n;
-      });
-
-      return copy;
+  setStats((s) => {
+    const ns = { ...s };
+    winners.forEach((name) => {
+      const st = { ...(ns[name] || { wins: 0, losses: 0, games: 0, lastResult: null }) };
+      st.wins++; st.games++; st.lastResult = "win"; ns[name] = st;
     });
+    losers.forEach((name) => {
+      const st = { ...(ns[name] || { wins: 0, losses: 0, games: 0, lastResult: null }) };
+      st.losses++; st.games++; st.lastResult = "lose"; ns[name] = st;
+    });
+    return ns;
+  });
 
-    showToast("Result recorded ✓");
-  };
+  setHistory((h) => {
+    if (h.some((x) => x.matchId === matchId)) return h;
+    return [{
+      matchId, court: courtIdx + 1,
+      type: m.type, t1: m.t1, t2: m.t2,
+      winners, losers,
+      time: new Date().toLocaleTimeString()
+    }, ...h];
+  });
+
+  setCourts((c) => {
+    const n = [...c];
+    const ci = n.indexOf(matchId);
+    if (ci !== -1) {
+      n[ci] = null;
+      setCourtStartTimes((t) => { const nt = [...t]; nt[ci] = null; return nt; });
+    }
+    return n;
+  });
+
+  showToast("Result recorded ✓");
+};
 
   const onCourtIds     = courts.filter(Boolean);
   const pendingMatches = matches.filter((m) => !m.done && !onCourtIds.includes(m.id));
@@ -425,7 +406,6 @@ export default function App() {
 
       <div className="main">
 
-        {/* ══ PLAYERS ══ */}
         {tab === "players" && (
           <div className="container">
             <form onSubmit={(e) => { e.preventDefault(); addPlayer(); }} className="player-form">
@@ -468,7 +448,6 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ MATCHES ══ */}
         {tab === "matches" && (
           <div>
             <div className="courts-wrap">
@@ -561,7 +540,6 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ STANDINGS ══ */}
         {tab === "standings" && (
           <div>
             {leader && (
@@ -589,17 +567,25 @@ export default function App() {
                     <tbody>
                       {sortedStats.map(([name, s], i) => {
                         const wr = s.games ? Math.round(s.wins / s.games * 100) : 0;
-                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1;
+                        const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
                         return (
                           <tr key={name} className={i === 0 ? "leader" : ""}>
-                            <td>{medal}</td>
+                            <td>
+                              {medal
+                                ? <span style={{ fontSize: 22 }}>{medal}</span>
+                                : <span style={{ fontSize: 11, fontWeight: 800, color: "#999",
+                                    background: "#efefef", borderRadius: "50%",
+                                    width: 24, height: 24, display: "inline-flex",
+                                    alignItems: "center", justifyContent: "center" }}>{i + 1}</span>
+                              }
+                            </td>
                             <td>
                               <div style={{ fontWeight: 700 }}>{name}</div>
-                              <div style={{ fontSize: 10, color: s.lastResult === "win" ? "#8ace00" : s.lastResult === "lose" ? "#ff5252" : "#aaa" }}>
+                              <div style={{ fontSize: 10, color: s.lastResult === "win" ? "#006700" : s.lastResult === "lose" ? "#ff5252" : "#aaa" }}>
                                 {s.lastResult === "win" ? "Last: W ↑" : s.lastResult === "lose" ? "Last: L ↓" : "—"}
                               </div>
                             </td>
-                            <td style={{ color: "#ffff", fontWeight: 700 }}>{s.wins}</td>
+                            <td style={{ color: "#000", fontWeight: 800, fontSize: 16 }}>{s.wins}</td>
                             <td>{s.games}</td>
                             <td>
                               <div className="wr-cell">
@@ -607,7 +593,7 @@ export default function App() {
                                 {wr}%
                               </div>
                             </td>
-                            <td style={{ color: "#fff", fontWeight: 700 }}>{s.wins * 20}</td>
+                            <td style={{ color: "#000", fontWeight: 700 }}>{s.wins * 20}</td>
                           </tr>
                         );
                       })}
@@ -619,7 +605,6 @@ export default function App() {
           </div>
         )}
 
-        {/* ══ HISTORY ══ */}
         {tab === "history" && (
           <div className="container">
             <div className="section-hdr">
@@ -644,7 +629,7 @@ export default function App() {
                       <div style={{ fontSize: 10, color: "#000", fontWeight: 700, letterSpacing: 1, marginBottom: 4 }}>WINNERS</div>
                       {h.winners.map((n) => (
                         <div key={n} className="hist-player">
-                          <span style={{ fontWeight: 700, color: "#008f2c" }}>{n}</span>
+                          <span style={{ fontWeight: 700, color: "#0d782d" }}>{n}</span>
                         </div>
                       ))}
                     </div>
@@ -668,7 +653,6 @@ export default function App() {
 
       </div>
 
-      {/* ASSIGN MODAL */}
       {assignModal && (
         <div className="modal-overlay" onClick={() => setAssignModal(null)}>
           <div className="modal-box" onClick={(e) => e.stopPropagation()}>
@@ -693,7 +677,6 @@ export default function App() {
         </div>
       )}
 
-      {/* RUMBLE MODAL */}
       {rumbleModal && (
         <RumbleModal
           match={rumbleModal}
